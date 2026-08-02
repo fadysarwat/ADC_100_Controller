@@ -64,12 +64,20 @@ static void rs485_task(void *arg)
     }
 }
 
-/* Door monitor task — checks reed, tamper, fire */
+/* Door monitor task — checks reed, tamper, fire, touch */
 static void door_task(void *arg)
 {
     ESP_LOGI(TAG, "Door monitor started");
 
     while (1) {
+        /* Check capacitive touch — open from inside */
+        if (hal_touch_is_pressed()) {
+            ESP_LOGI(TAG, "Touch pressed — opening door");
+            access_token_t token = { .method = ACCESS_METHOD_TOUCH };
+            access_manager_check(&token);
+            vTaskDelay(pdMS_TO_TICKS(500)); /* debounce */
+        }
+
         door_event_t event = hal_door_poll();
 
         switch (event) {

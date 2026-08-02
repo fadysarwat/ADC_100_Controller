@@ -11,7 +11,7 @@
 static const char *TAG = "HAL_TOUCH";
 
 #define TOUCH_CHANNEL    TOUCH_PAD_NUM11
-#define TOUCH_THRESHOLD  20000
+#define TOUCH_THRESHOLD  50000
 
 void hal_touch_init(void)
 {
@@ -41,5 +41,6 @@ bool hal_touch_is_pressed(void)
 {
     uint32_t val = 0;
     touch_pad_read_raw_data(TOUCH_CHANNEL, &val);
+    //ESP_LOGI("TOUCH", "Raw value: %lu", val);  /* مؤقت للكاليبريشن */
     return val > TOUCH_THRESHOLD;
 }
