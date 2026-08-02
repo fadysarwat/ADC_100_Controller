@@ -21,8 +21,9 @@ typedef enum {
     ACCESS_METHOD_RFID,
     ACCESS_METHOD_PIN,
     ACCESS_METHOD_QR,
-    ACCESS_METHOD_TOUCH,   /* داخلي — فتح من الجوه */
-    ACCESS_METHOD_BLE,     /* موبايل */
+    ACCESS_METHOD_TOUCH,
+    ACCESS_METHOD_BLE,
+    ACCESS_METHOD_MQTT,
 } access_method_t;
 
 typedef struct {
@@ -31,6 +32,9 @@ typedef struct {
     uint8_t         data_len;
 } access_token_t;
 
-void          access_manager_init(void);
+void            access_manager_init(void);
 access_result_t access_manager_check(const access_token_t *token);
-void          access_manager_tick(void);
+void            access_manager_tick(void);
+void            access_manager_set_event_callback(void (*cb)(const char *event_type,
+                                                              const char *method,
+                                                              const char *result));

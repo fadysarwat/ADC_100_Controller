@@ -5,6 +5,7 @@
 
 #include "mqtt_manager.h"
 #include "hal_mqtt.h"
+#include "hal_wifi.h"
 #include "credential_store.h"
 #include "access_manager.h"
 #include "esp_log.h"
@@ -35,7 +36,7 @@ static void on_mqtt_message(const char *topic, const char *data, int data_len)
     if (strcmp(topic, s_topic_all) == 0) {
         ESP_LOGI(TAG, "Broadcast command received: %s", data);
         if (strstr(data, "\"cmd\":\"open\"")) {
-            access_token_t token = { .method = ACCESS_METHOD_BLE };
+            access_token_t token = { .method = ACCESS_METHOD_MQTT };
             access_manager_check(&token);
         }
         return;
@@ -44,11 +45,20 @@ static void on_mqtt_message(const char *topic, const char *data, int data_len)
     /* Device-specific command */
     if (strcmp(topic, s_topic_cmd) == 0) {
         ESP_LOGI(TAG, "Device command received: %s", data);
+
         if (strstr(data, "\"cmd\":\"open\"")) {
             ESP_LOGI(TAG, "Cloud open command — opening door");
-            access_token_t token = { .method = ACCESS_METHOD_BLE };
+            access_token_t token = { .method = ACCESS_METHOD_MQTT };
             access_manager_check(&token);
+            return;
         }
+
+        if (strstr(data, "\"cmd\":\"reset_wifi\"")) {
+            ESP_LOGW(TAG, "WiFi reset command — clearing credentials");
+            hal_wifi_reset_credentials();
+            return;
+        }
+
         return;
     }
 }

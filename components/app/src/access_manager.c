@@ -20,12 +20,38 @@ static const char *TAG = "ACCESS_MGR";
 #define LED_ON_DURATION_MS  2000
 #define AUTO_LOCK_MS        5000
 
-static int     s_fail_count     = 0;
-static int64_t s_led_reset_time = 0;
+static int     s_fail_count      = 0;
+static int64_t s_led_reset_time  = 0;
 static int64_t s_relay_open_time = 0;
 
-/* Apply the result — control relay, LED, buzzer */
-static void apply_result(access_result_t result)
+/* Event callback — set by main to publish events to MQTT */
+static void (*s_event_cb)(const char *event_type,
+                           const char *method,
+                           const char *result) = NULL;
+
+void access_manager_set_event_callback(void (*cb)(const char *event_type,
+                                                   const char *method,
+                                                   const char *result))
+{
+    s_event_cb = cb;
+}
+
+/* Get method name as string */
+static const char *method_str(access_method_t method)
+{
+    switch (method) {
+        case ACCESS_METHOD_RFID:  return "RFID";
+        case ACCESS_METHOD_PIN:   return "PIN";
+        case ACCESS_METHOD_QR:    return "QR";
+        case ACCESS_METHOD_TOUCH: return "TOUCH";
+        case ACCESS_METHOD_BLE:   return "BLE";
+        case ACCESS_METHOD_MQTT:  return "MQTT";
+        default:                  return "UNKNOWN";
+    }
+}
+
+/* Apply the result — control relay, LED, buzzer, event */
+static void apply_result(access_result_t result, access_method_t method)
 {
     switch (result) {
 
@@ -38,10 +64,10 @@ static void apply_result(access_result_t result)
             s_relay_open_time = esp_timer_get_time();
             s_led_reset_time  = esp_timer_get_time() +
                                 (LED_ON_DURATION_MS * 1000LL);
+            if (s_event_cb) s_event_cb("access", method_str(method), "GRANTED");
             break;
 
         case ACCESS_RESULT_DURESS:
-            /* Open the door silently — trigger alert upstream */
             ESP_LOGW(TAG, "DURESS OPEN — silent alert");
             s_fail_count = 0;
             hal_relay_open();
@@ -50,6 +76,7 @@ static void apply_result(access_result_t result)
             s_relay_open_time = esp_timer_get_time();
             s_led_reset_time  = esp_timer_get_time() +
                                 (LED_ON_DURATION_MS * 1000LL);
+            if (s_event_cb) s_event_cb("access", method_str(method), "DURESS");
             break;
 
         case ACCESS_RESULT_DENIED:
@@ -60,20 +87,22 @@ static void apply_result(access_result_t result)
             hal_buzzer_denied();
             s_led_reset_time = esp_timer_get_time() +
                                (LED_ON_DURATION_MS * 1000LL);
+            if (s_event_cb) s_event_cb("access", method_str(method), "DENIED");
             break;
 
         case ACCESS_RESULT_FIRE:
-            /* Fire input — force open regardless of credentials */
             ESP_LOGW(TAG, "FIRE — forcing door open");
             hal_relay_open();
             hal_led_red();
             hal_buzzer_alert();
+            if (s_event_cb) s_event_cb("fire", "FIRE", "GRANTED");
             break;
 
         case ACCESS_RESULT_TAMPER:
             ESP_LOGW(TAG, "TAMPER detected");
             hal_led_red();
             hal_buzzer_alert();
+            if (s_event_cb) s_event_cb("tamper", "TAMPER", "ALERT");
             break;
 
         default:
@@ -97,15 +126,21 @@ void access_manager_init(void)
 
 access_result_t access_manager_check(const access_token_t *token)
 {
-    /* Touch button — open immediately, no credential check */
+    /* Touch button — open immediately */
     if (token->method == ACCESS_METHOD_TOUCH) {
-        apply_result(ACCESS_RESULT_GRANTED);
+        apply_result(ACCESS_RESULT_GRANTED, ACCESS_METHOD_TOUCH);
         return ACCESS_RESULT_GRANTED;
     }
 
-    /* BLE open — open immediately, auth handled at BLE layer */
+    /* BLE open — open immediately */
     if (token->method == ACCESS_METHOD_BLE) {
-        apply_result(ACCESS_RESULT_GRANTED);
+        apply_result(ACCESS_RESULT_GRANTED, ACCESS_METHOD_BLE);
+        return ACCESS_RESULT_GRANTED;
+    }
+
+    /* MQTT open — open immediately */
+    if (token->method == ACCESS_METHOD_MQTT) {
+        apply_result(ACCESS_RESULT_GRANTED, ACCESS_METHOD_MQTT);
         return ACCESS_RESULT_GRANTED;
     }
 
@@ -124,7 +159,7 @@ access_result_t access_manager_check(const access_token_t *token)
         case ACCESS_METHOD_PIN:  ctype = CRED_TYPE_PIN;  break;
         case ACCESS_METHOD_QR:   ctype = CRED_TYPE_QR;   break;
         default:
-            apply_result(ACCESS_RESULT_DENIED);
+            apply_result(ACCESS_RESULT_DENIED, token->method);
             return ACCESS_RESULT_DENIED;
     }
 
@@ -140,7 +175,7 @@ access_result_t access_manager_check(const access_token_t *token)
         result = ACCESS_RESULT_DENIED;
     }
 
-    apply_result(result);
+    apply_result(result, token->method);
     return result;
 }
 

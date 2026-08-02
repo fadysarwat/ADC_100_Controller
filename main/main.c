@@ -63,6 +63,9 @@ void app_main(void)
         ESP_LOGW(TAG, "WiFi failed — running offline");
     }
 
+    /* Set event callback — publishes access events to MQTT */
+    access_manager_set_event_callback(mqtt_manager_publish_event);
+
     /* Start controller tasks */
     controller_app_start();
 
