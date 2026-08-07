@@ -9,7 +9,12 @@
 #include "hal_door.h"
 #include "hal_touch.h"
 #include "hal_led.h"
+#include "hal_relay.h"
 #include "hal_buzzer.h"
+#include "hal_wifi.h"
+#include "mqtt_manager.h"
+#include "credential_store.h"
+#include "nvs_flash.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -24,7 +29,6 @@ static void process_rs485_frame(const rs485_frame_t *frame)
     token.data_len = frame->data_len;
     memcpy(token.data, frame->data, frame->data_len);
 
-    /* Map RS485 token type to access method */
     switch (frame->type) {
         case RS485_TYPE_RFID: token.method = ACCESS_METHOD_RFID; break;
         case RS485_TYPE_PIN:  token.method = ACCESS_METHOD_PIN;  break;
@@ -35,7 +39,6 @@ static void process_rs485_frame(const rs485_frame_t *frame)
             return;
     }
 
-    /* Check credential and send response back to Reader */
     access_result_t result = access_manager_check(&token);
 
     switch (result) {
@@ -51,7 +54,23 @@ static void process_rs485_frame(const rs485_frame_t *frame)
     }
 }
 
-/* RS485 listener task — waits for frames from Reader */
+/* Handle tamper event — wipe all data and restart */
+static void handle_tamper(void)
+{
+    ESP_LOGW(TAG, "TAMPER — wiping all credentials and restarting");
+
+    /* Publish tamper alert to Cloud before wiping */
+    mqtt_manager_publish_event("tamper", "TAMPER", "ALERT");
+    vTaskDelay(pdMS_TO_TICKS(500));  /* Give MQTT time to send */
+
+    /* Wipe credentials */
+    nvs_flash_erase();
+
+    /* Wipe WiFi credentials and restart */
+    hal_wifi_reset_credentials();  /* This calls esp_restart() */
+}
+
+/* RS485 listener task */
 static void rs485_task(void *arg)
 {
     rs485_frame_t frame;
@@ -70,12 +89,12 @@ static void door_task(void *arg)
     ESP_LOGI(TAG, "Door monitor started");
 
     while (1) {
-        /* Check capacitive touch — open from inside */
+        /* Capacitive touch — open from inside */
         if (hal_touch_is_pressed()) {
             ESP_LOGI(TAG, "Touch pressed — opening door");
             access_token_t token = { .method = ACCESS_METHOD_TOUCH };
             access_manager_check(&token);
-            vTaskDelay(pdMS_TO_TICKS(500)); /* debounce */
+            vTaskDelay(pdMS_TO_TICKS(500));
         }
 
         door_event_t event = hal_door_poll();
@@ -83,32 +102,37 @@ static void door_task(void *arg)
         switch (event) {
             case DOOR_EVENT_OPENED:
                 ESP_LOGI(TAG, "Door opened");
+                mqtt_manager_publish_event("door", "REED", "OPENED");
                 break;
 
             case DOOR_EVENT_CLOSED:
                 ESP_LOGI(TAG, "Door closed");
+                mqtt_manager_publish_event("door", "REED", "CLOSED");
                 break;
 
             case DOOR_EVENT_HELD_OPEN:
-                /* TODO: send MQTT alert */
                 ESP_LOGW(TAG, "Door held open alert");
                 hal_buzzer_alert();
+                mqtt_manager_publish_event("door", "REED", "HELD_OPEN");
                 break;
 
             case DOOR_EVENT_TAMPER:
-                /* Alert only — do NOT open door */
-                ESP_LOGW(TAG, "TAMPER detected — alert only");
-                hal_led_red();
-                hal_buzzer_alert();
+                handle_tamper();
                 break;
 
-            case DOOR_EVENT_FIRE:
-                /* Force open on fire alarm */
-                ESP_LOGW(TAG, "FIRE — forcing door open");
-                access_manager_check(&(access_token_t){
-                    .method = ACCESS_METHOD_TOUCH
-                });
-                break;
+			case DOOR_EVENT_FIRE:
+			    ESP_LOGW(TAG, "FIRE — forcing door open indefinitely");
+			    hal_relay_open();
+			    hal_led_red();
+			    hal_buzzer_alert();
+			    mqtt_manager_publish_event("fire", "FIRE", "GRANTED");
+			    /* Stay open — no auto-lock */
+			    while (hal_door_is_fire()) {
+			        vTaskDelay(pdMS_TO_TICKS(500));
+			    }
+			    ESP_LOGI(TAG, "FIRE cleared — closing door");
+			    hal_relay_close();
+			    break;
 
             default:
                 break;
@@ -131,7 +155,6 @@ void controller_app_start(void)
 {
     access_manager_init();
 
-    /* Start all tasks */
     xTaskCreate(rs485_task, "rs485_task", 4096, NULL, 5, NULL);
     xTaskCreate(door_task,  "door_task",  4096, NULL, 4, NULL);
     xTaskCreate(tick_task,  "tick_task",  2048, NULL, 3, NULL);
