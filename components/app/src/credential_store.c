@@ -71,7 +71,8 @@ void cred_store_init(void)
         nvs_close(h);
     }
 
-    ESP_LOGI(TAG, "Loaded %ld credentials from NVS", s_count);
+    ESP_LOGI(TAG, "Loaded %ld slots — %d active credentials",
+             s_count, cred_store_count());
 
     if (s_count == 0) {
         cred_store_seed_defaults();
@@ -89,23 +90,43 @@ bool cred_store_add(const credential_t *cred)
     s_count++;
     nvs_save_count();
 
-    ESP_LOGI(TAG, "Credential added: %s (total: %ld)", cred->label, s_count);
+    ESP_LOGI(TAG, "Credential added: %s (active: %d)",
+             cred->label, cred_store_count());
     return true;
 }
 
 bool cred_store_remove(const char *label)
 {
+    /* ابحث عن الـ credential */
+    int found_idx = -1;
     for (int i = 0; i < s_count; i++) {
         credential_t cred;
         if (!nvs_read_cred(i, &cred)) continue;
         if (strncmp(cred.label, label, CRED_LABEL_MAX_LEN) == 0) {
-            cred.is_active = false;
-            nvs_write_cred(i, &cred);
-            ESP_LOGI(TAG, "Credential removed: %s", label);
-            return true;
+            found_idx = i;
+            break;
         }
     }
-    return false;
+
+    if (found_idx == -1) return false;
+
+    /* Compact — بنشيل الـ slot ده ونحرك الباقي */
+    for (int i = found_idx; i < s_count - 1; i++) {
+        credential_t next;
+        if (nvs_read_cred(i + 1, &next)) {
+            nvs_write_cred(i, &next);
+        }
+    }
+
+    /* مسح آخر slot */
+    credential_t empty = {0};
+    nvs_write_cred(s_count - 1, &empty);
+
+    s_count--;
+    nvs_save_count();
+
+    ESP_LOGI(TAG, "Credential removed: %s (active: %d)", label, cred_store_count());
+    return true;
 }
 
 bool cred_store_lookup(cred_type_t type, const uint8_t *data,
@@ -127,14 +148,20 @@ bool cred_store_lookup(cred_type_t type, const uint8_t *data,
 
 int cred_store_count(void)
 {
-    return (int)s_count;
+    /* عد الـ active credentials بس */
+    int active = 0;
+    for (int i = 0; i < s_count; i++) {
+        credential_t cred;
+        if (!nvs_read_cred(i, &cred)) continue;
+        if (cred.is_active) active++;
+    }
+    return active;
 }
 
 void cred_store_seed_defaults(void)
 {
     ESP_LOGI(TAG, "Seeding default credentials...");
 
-    /* Default RFID card */
     credential_t c1 = {
         .type      = CRED_TYPE_RFID,
         .data      = {0x6A, 0x48, 0xE6, 0x00},
@@ -145,7 +172,6 @@ void cred_store_seed_defaults(void)
     };
     cred_store_add(&c1);
 
-    /* Default PIN */
     credential_t c2 = {
         .type      = CRED_TYPE_PIN,
         .data      = {'1','2','3','4'},
@@ -156,7 +182,6 @@ void cred_store_seed_defaults(void)
     };
     cred_store_add(&c2);
 
-    /* Duress PIN */
     credential_t c3 = {
         .type      = CRED_TYPE_PIN,
         .data      = {'9','1','1','0'},

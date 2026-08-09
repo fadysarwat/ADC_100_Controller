@@ -3,6 +3,7 @@ idf_component_register(
          "src/credential_store.c"
          "src/access_manager.c"
          "src/mqtt_manager.c"
+         "src/schedule_manager.c"
     INCLUDE_DIRS "include"
     REQUIRES adc_hal mcal nvs_flash esp_timer bt
 )

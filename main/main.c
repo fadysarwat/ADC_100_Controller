@@ -12,6 +12,7 @@
 #include "hal_rs485.h"
 #include "hal_wifi.h"
 #include "hal_ble.h"
+#include "hal_ntp.h"
 #include "mqtt_manager.h"
 #include "controller_app.h"
 #include "access_manager.h"
@@ -55,6 +56,11 @@ void app_main(void)
     /* Connect to WiFi — starts provisioning if no credentials saved */
     hal_wifi_init();
     hal_wifi_wait_connected();
+
+    /* Sync NTP time — must be after WiFi */
+    if (hal_wifi_is_connected()) {
+        hal_ntp_init();
+    }
 
     /* Start MQTT if WiFi connected */
     if (hal_wifi_is_connected()) {

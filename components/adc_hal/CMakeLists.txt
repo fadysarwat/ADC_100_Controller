@@ -8,6 +8,7 @@ idf_component_register(
          "src/hal_wifi.c"
          "src/hal_mqtt.c"
          "src/hal_ble.c"
+         "src/hal_ntp.c"
     INCLUDE_DIRS "include"
-    REQUIRES mcal driver esp_timer esp_wifi esp_event esp_netif mqtt nvs_flash esp_http_server mbedtls bt
+    REQUIRES mcal driver esp_timer esp_wifi esp_event esp_netif mqtt nvs_flash esp_http_server mbedtls bt lwip
 )

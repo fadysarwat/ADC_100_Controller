@@ -4,6 +4,7 @@
  */
 
 #include "access_manager.h"
+#include "schedule_manager.h"
 #include "credential_store.h"
 #include "hal_relay.h"
 #include "hal_led.h"
@@ -16,18 +17,18 @@
 
 static const char *TAG = "ACCESS_MGR";
 
-#define MAX_FAILURES        5
-#define LED_ON_DURATION_MS  2000
-#define AUTO_LOCK_MS        5000
+#define MAX_FAILURES       5
+#define LED_ON_DURATION_MS 2000
+#define AUTO_LOCK_MS       5000
 
-static int     s_fail_count      = 0;
+static int   s_fail_count      = 0;
 static int64_t s_led_reset_time  = 0;
 static int64_t s_relay_open_time = 0;
 
 /* Event callback — set by main to publish events to MQTT */
 static void (*s_event_cb)(const char *event_type,
-                           const char *method,
-                           const char *result) = NULL;
+                          const char *method,
+                          const char *result) = NULL;
 
 void access_manager_set_event_callback(void (*cb)(const char *event_type,
                                                    const char *method,
@@ -54,7 +55,6 @@ static const char *method_str(access_method_t method)
 static void apply_result(access_result_t result, access_method_t method)
 {
     switch (result) {
-
         case ACCESS_RESULT_GRANTED:
             ESP_LOGI(TAG, "ACCESS GRANTED");
             s_fail_count = 0;
@@ -62,8 +62,7 @@ static void apply_result(access_result_t result, access_method_t method)
             hal_led_green();
             hal_buzzer_granted();
             s_relay_open_time = esp_timer_get_time();
-            s_led_reset_time  = esp_timer_get_time() +
-                                (LED_ON_DURATION_MS * 1000LL);
+            s_led_reset_time  = esp_timer_get_time() + (LED_ON_DURATION_MS * 1000LL);
             if (s_event_cb) s_event_cb("access", method_str(method), "GRANTED");
             break;
 
@@ -74,8 +73,7 @@ static void apply_result(access_result_t result, access_method_t method)
             hal_led_green();
             hal_buzzer_silent();
             s_relay_open_time = esp_timer_get_time();
-            s_led_reset_time  = esp_timer_get_time() +
-                                (LED_ON_DURATION_MS * 1000LL);
+            s_led_reset_time  = esp_timer_get_time() + (LED_ON_DURATION_MS * 1000LL);
             if (s_event_cb) s_event_cb("access", method_str(method), "DURESS");
             break;
 
@@ -85,9 +83,16 @@ static void apply_result(access_result_t result, access_method_t method)
             s_fail_count++;
             hal_led_red();
             hal_buzzer_denied();
-            s_led_reset_time = esp_timer_get_time() +
-                               (LED_ON_DURATION_MS * 1000LL);
+            s_led_reset_time = esp_timer_get_time() + (LED_ON_DURATION_MS * 1000LL);
             if (s_event_cb) s_event_cb("access", method_str(method), "DENIED");
+            break;
+
+        case ACCESS_RESULT_SCHEDULE_DENIED:
+            ESP_LOGW(TAG, "ACCESS DENIED — outside schedule window");
+            hal_led_red();
+            hal_buzzer_denied();
+            s_led_reset_time = esp_timer_get_time() + (LED_ON_DURATION_MS * 1000LL);
+            if (s_event_cb) s_event_cb("schedule", method_str(method), "DENIED_OUTSIDE_WINDOW");
             break;
 
         case ACCESS_RESULT_FIRE:
@@ -117,28 +122,33 @@ void access_manager_init(void)
     s_fail_count      = 0;
     s_led_reset_time  = 0;
     s_relay_open_time = 0;
-
     cred_store_init();
-
+    schedule_manager_init();
     ESP_LOGI(TAG, "Access manager ready — %d credentials loaded",
              cred_store_count());
 }
 
 access_result_t access_manager_check(const access_token_t *token)
 {
-    /* Touch button — open immediately */
+    /* Fire — يتجاوز الـ schedule دايماً */
     if (token->method == ACCESS_METHOD_TOUCH) {
         apply_result(ACCESS_RESULT_GRANTED, ACCESS_METHOD_TOUCH);
         return ACCESS_RESULT_GRANTED;
     }
 
-    /* BLE open — open immediately */
+    /* Schedule check — لكل الـ methods الباقية */
+    if (!schedule_manager_is_allowed()) {
+        apply_result(ACCESS_RESULT_SCHEDULE_DENIED, token->method);
+        return ACCESS_RESULT_SCHEDULE_DENIED;
+    }
+
+    /* BLE open */
     if (token->method == ACCESS_METHOD_BLE) {
         apply_result(ACCESS_RESULT_GRANTED, ACCESS_METHOD_BLE);
         return ACCESS_RESULT_GRANTED;
     }
 
-    /* MQTT open — open immediately */
+    /* MQTT open */
     if (token->method == ACCESS_METHOD_MQTT) {
         apply_result(ACCESS_RESULT_GRANTED, ACCESS_METHOD_MQTT);
         return ACCESS_RESULT_GRANTED;
@@ -193,8 +203,7 @@ void access_manager_tick(void)
     }
 
     /* Reset LED to idle */
-    if (s_led_reset_time != 0 &&
-        now >= s_led_reset_time) {
+    if (s_led_reset_time != 0 && now >= s_led_reset_time) {
         s_led_reset_time = 0;
         hal_led_idle();
     }

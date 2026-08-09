@@ -15,6 +15,7 @@ typedef enum {
     ACCESS_RESULT_LOCKOUT,
     ACCESS_RESULT_FIRE,
     ACCESS_RESULT_TAMPER,
+    ACCESS_RESULT_SCHEDULE_DENIED,   /* جديد — رفض بسبب الـ schedule */
 } access_result_t;
 
 typedef enum {

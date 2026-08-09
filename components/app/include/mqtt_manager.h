@@ -17,3 +17,6 @@ void mqtt_manager_publish_event(const char *event_type,
 
 /* Publish device status to cloud */
 void mqtt_manager_publish_status(void);
+
+/* Publish periodic heartbeat — full device health snapshot */
+void mqtt_manager_publish_heartbeat(void);

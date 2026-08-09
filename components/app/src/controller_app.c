@@ -22,6 +22,9 @@
 
 static const char *TAG = "CTRL_APP";
 
+/* Heartbeat interval — غيّر الرقم حسب الحاجة */
+#define HEARTBEAT_INTERVAL_MS   (1 * 60 * 1000)   /* 5 دقايق */
+
 /* Process incoming RS485 frame from Reader */
 static void process_rs485_frame(const rs485_frame_t *frame)
 {
@@ -61,13 +64,13 @@ static void handle_tamper(void)
 
     /* Publish tamper alert to Cloud before wiping */
     mqtt_manager_publish_event("tamper", "TAMPER", "ALERT");
-    vTaskDelay(pdMS_TO_TICKS(500));  /* Give MQTT time to send */
+    vTaskDelay(pdMS_TO_TICKS(500)); /* Give MQTT time to send */
 
     /* Wipe credentials */
     nvs_flash_erase();
 
     /* Wipe WiFi credentials and restart */
-    hal_wifi_reset_credentials();  /* This calls esp_restart() */
+    hal_wifi_reset_credentials(); /* This calls esp_restart() */
 }
 
 /* RS485 listener task */
@@ -120,19 +123,19 @@ static void door_task(void *arg)
                 handle_tamper();
                 break;
 
-			case DOOR_EVENT_FIRE:
-			    ESP_LOGW(TAG, "FIRE — forcing door open indefinitely");
-			    hal_relay_open();
-			    hal_led_red();
-			    hal_buzzer_alert();
-			    mqtt_manager_publish_event("fire", "FIRE", "GRANTED");
-			    /* Stay open — no auto-lock */
-			    while (hal_door_is_fire()) {
-			        vTaskDelay(pdMS_TO_TICKS(500));
-			    }
-			    ESP_LOGI(TAG, "FIRE cleared — closing door");
-			    hal_relay_close();
-			    break;
+            case DOOR_EVENT_FIRE:
+                ESP_LOGW(TAG, "FIRE — forcing door open indefinitely");
+                hal_relay_open();
+                hal_led_red();
+                hal_buzzer_alert();
+                mqtt_manager_publish_event("fire", "FIRE", "GRANTED");
+                /* Stay open — no auto-lock */
+                while (hal_door_is_fire()) {
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                }
+                ESP_LOGI(TAG, "FIRE cleared — closing door");
+                hal_relay_close();
+                break;
 
             default:
                 break;
@@ -151,13 +154,28 @@ static void tick_task(void *arg)
     }
 }
 
+/* Heartbeat task — publishes periodic health check to cloud */
+static void heartbeat_task(void *arg)
+{
+    /* انتظر 10 ثواني بعد البدء عشان MQTT يتوصل */
+    vTaskDelay(pdMS_TO_TICKS(10000));
+
+    ESP_LOGI(TAG, "Heartbeat task started — interval: %d ms", HEARTBEAT_INTERVAL_MS);
+
+    while (1) {
+        mqtt_manager_publish_heartbeat();
+        vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_INTERVAL_MS));
+    }
+}
+
 void controller_app_start(void)
 {
     access_manager_init();
 
-    xTaskCreate(rs485_task, "rs485_task", 4096, NULL, 5, NULL);
-    xTaskCreate(door_task,  "door_task",  4096, NULL, 4, NULL);
-    xTaskCreate(tick_task,  "tick_task",  2048, NULL, 3, NULL);
+    xTaskCreate(rs485_task,     "rs485_task",     4096, NULL, 5, NULL);
+    xTaskCreate(door_task,      "door_task",      4096, NULL, 4, NULL);
+    xTaskCreate(tick_task,      "tick_task",      2048, NULL, 3, NULL);
+    xTaskCreate(heartbeat_task, "heartbeat_task", 3072, NULL, 2, NULL);
 
     ESP_LOGI(TAG, "Controller app started");
 }
